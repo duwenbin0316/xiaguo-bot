@@ -6,8 +6,8 @@ const app = express();
 app.use(express.json());
 
 // ============ 配置 ============
-const APP_ID = process.env.APP_ID || 'cli_a92018d83c3a9bcc';
-const APP_SECRET = process.env.APP_SECRET || 'xPVAAf7AbQbMkU3KkRRINgW3n7GgMuYi';
+const APP_ID = process.env.APP_ID || 'cli_a9314a9ae979dbef';
+const APP_SECRET = process.env.APP_SECRET || 'OS33qiDnIGtnt4NRpd1secMEBz1WOqmX';
 const ENCRYPT_KEY = process.env.ENCRYPT_KEY || ''; // 飞书应用里设置的 Encrypt Key（可选）
 const VERIFICATION_TOKEN = process.env.VERIFICATION_TOKEN || ''; // 飞书应用里的 Verification Token
 
