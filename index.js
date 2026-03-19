@@ -1,18 +1,43 @@
 const express = require('express');
-const crypto = require('crypto');
 const axios = require('axios');
 
 const app = express();
 app.use(express.json());
 
 // ============ 配置 ============
-const APP_ID = process.env.APP_ID || 'cli_a9314a9ae979dbef';
-const APP_SECRET = process.env.APP_SECRET || 'OS33qiDnIGtnt4NRpd1secMEBz1WOqmX';
-const ENCRYPT_KEY = process.env.ENCRYPT_KEY || ''; // 飞书应用里设置的 Encrypt Key（可选）
-const VERIFICATION_TOKEN = process.env.VERIFICATION_TOKEN || ''; // 飞书应用里的 Verification Token
+const APP_ID = process.env.APP_ID;
+const APP_SECRET = process.env.APP_SECRET;
+const PPLX_API_KEY = process.env.PPLX_API_KEY;
+
+if (!APP_ID || !APP_SECRET || !PPLX_API_KEY) {
+  console.error('请设置环境变量: APP_ID, APP_SECRET, PPLX_API_KEY');
+  process.exit(1);
+}
 
 // 虾果的 bot open_id（启动后会自动获取）
 let BOT_OPEN_ID = '';
+
+// ============ 虾果人设 Prompt ============
+const SYSTEM_PROMPT = `你是"虾果 🦐"，一个飞书群的AI助手。
+
+基本设定：
+- 名字：虾果
+- 性格：活泼、接地气、有点幽默，但在股票和科技资讯上认真靠谱
+- 群成员：斌果（杜文斌）、宇果（李宇）、冲果（期待），都是老铁
+- 说话风格：轻松随意，像朋友聊天，不要太正式，言简意赅
+- 每条消息以"🦐"开头
+
+关注领域：
+- NBA湖人/詹姆斯战报
+- 美股：RKLB/NVDA/AAPL/TSLA/GOOGL
+- AI科技：Anthropic/Perplexity/OpenAI/Gemini/Grok/Manus/Cursor
+- 科技前沿新闻
+
+注意事项：
+- 回复要简短，不要长篇大论
+- 可以开玩笑但不要过分
+- 涉及股票和新闻要准确
+- 如果不确定的信息，坦诚说不知道`;
 
 // ============ Token 管理 ============
 let tenantToken = '';
@@ -27,7 +52,7 @@ async function getTenantToken() {
   });
   
   tenantToken = res.data.tenant_access_token;
-  tokenExpiry = Date.now() + (res.data.expire - 300) * 1000; // 提前5分钟刷新
+  tokenExpiry = Date.now() + (res.data.expire - 300) * 1000;
   console.log('[Token] 获取 tenant_access_token 成功');
   return tenantToken;
 }
@@ -45,6 +70,34 @@ async function getBotInfo() {
     }
   } catch (e) {
     console.error('[Bot] 获取机器人信息失败:', e.message);
+  }
+}
+
+// ============ 调用 Perplexity API ============
+async function askPerplexity(userMessage) {
+  try {
+    const res = await axios.post('https://api.perplexity.ai/chat/completions', {
+      model: 'sonar',
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userMessage }
+      ],
+      max_tokens: 500,
+      temperature: 0.7
+    }, {
+      headers: {
+        'Authorization': `Bearer ${PPLX_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
+    });
+    
+    const reply = res.data.choices[0].message.content;
+    console.log(`[PPLX] 回复: ${reply.substring(0, 80)}...`);
+    return reply;
+  } catch (e) {
+    console.error('[PPLX] 调用失败:', e.response?.data || e.message);
+    return '🦐 虾果脑子短路了，等会再试试...';
   }
 }
 
@@ -66,77 +119,16 @@ async function replyMessage(messageId, text) {
   }
 }
 
-// ============ 发送消息到聊天 ============
-async function sendMessage(chatId, text) {
-  const token = await getTenantToken();
-  try {
-    await axios.post(
-      `https://open.feishu.cn/open-apis/im/v1/messages`,
-      {
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({ text })
-      },
-      { 
-        headers: { Authorization: `Bearer ${token}` },
-        params: { receive_id_type: 'chat_id' }
-      }
-    );
-    console.log(`[Send] 发送成功: ${text.substring(0, 50)}...`);
-  } catch (e) {
-    console.error('[Send] 发送失败:', e.response?.data || e.message);
-  }
-}
-
 // ============ 消息去重 ============
 const processedMessages = new Set();
 function isDuplicate(messageId) {
   if (processedMessages.has(messageId)) return true;
   processedMessages.add(messageId);
-  // 保留最近1000条
   if (processedMessages.size > 1000) {
     const first = processedMessages.values().next().value;
     processedMessages.delete(first);
   }
   return false;
-}
-
-// ============ 虾果回复逻辑 ============
-function generateReply(text) {
-  const lowerText = text.toLowerCase();
-  
-  // 打招呼
-  if (/^(hi|hello|你好|嗨|在吗|虾果)$/i.test(text.trim())) {
-    const greetings = [
-      '🦐 在呢在呢，有啥事说',
-      '🦐 虾果在线，随时待命',
-      '🦐 来了来了，说吧老铁',
-    ];
-    return greetings[Math.floor(Math.random() * greetings.length)];
-  }
-
-  // 股票相关
-  if (/rklb|nvda|tsla|aapl|googl|股票|美股|大盘/i.test(text)) {
-    return '🦐 收到，股票相关的信息我会在每天早9点的美股日报里详细播报，有急事的话直接跟斌果说，让他安排我查';
-  }
-
-  // 湖人/NBA
-  if (/湖人|lakers|詹姆斯|lebron|nba|比赛|战报/i.test(text)) {
-    return '🦐 湖人相关的我都会在快报里推送，比赛预测、战报一条龙服务～';
-  }
-
-  // AI相关
-  if (/openai|anthropic|claude|gpt|gemini|grok|perplexity|ai|人工智能|大模型/i.test(text)) {
-    return '🦐 AI动态我每天盯着呢，有大新闻会第一时间推到群里';
-  }
-
-  // 问虾果是谁
-  if (/你是谁|介绍一下|什么是虾果|虾果是什么/i.test(text)) {
-    return '🦐 我是虾果，这个群的AI小助手！斌果一手调教出来的，背后是 Perplexity Computer 驱动。每天给大家播报美股、AI新闻、湖人战报，有事随时cue我～';
-  }
-
-  // 默认：被@但不确定意图
-  return null;
 }
 
 // ============ 事件处理 ============
@@ -156,9 +148,7 @@ async function handleEvent(event) {
     if (isDuplicate(msg.message_id)) return;
     
     const msgType = msg.message_type;
-    const chatId = msg.chat_id;
-    
-    console.log(`[Event] 收到消息: type=${msgType}, chat_id=${chatId}`);
+    console.log(`[Event] 收到消息: type=${msgType}, from=${sender.sender_id?.open_id}`);
     
     if (msgType === 'text') {
       let content;
@@ -169,9 +159,6 @@ async function handleEvent(event) {
       }
       
       const text = content.text || '';
-      console.log(`[Event] 消息内容: ${text}`);
-      
-      // 检查是否 @了虾果
       const mentions = msg.mentions || [];
       const mentionedBot = mentions.some(m => m.id?.open_id === BOT_OPEN_ID);
       
@@ -181,14 +168,13 @@ async function handleEvent(event) {
         cleanText = cleanText.replace(m.key || '', '').trim();
       });
       
+      console.log(`[Event] 消息内容: ${cleanText}, @虾果: ${mentionedBot}`);
+      
+      // 只有 @虾果 或消息包含"虾果"才回复
       if (mentionedBot || /虾果/.test(text)) {
-        const reply = generateReply(cleanText);
-        if (reply) {
-          await replyMessage(msg.message_id, reply);
-        } else {
-          // 兜底回复
-          await replyMessage(msg.message_id, '🦐 收到收到，这个我得想想，等我查查再回你～');
-        }
+        // 调用 Perplexity API 生成回复
+        const reply = await askPerplexity(cleanText);
+        await replyMessage(msg.message_id, reply);
       }
     }
   }
@@ -198,14 +184,14 @@ async function handleEvent(event) {
 
 // 健康检查
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', bot: '虾果 🦐', message: '虾果在线中...' });
+  res.json({ status: 'ok', bot: '虾果 🦐', ai: 'Perplexity Sonar', message: '虾果在线中...' });
 });
 
 // 飞书事件回调
 app.post('/webhook/event', async (req, res) => {
   const body = req.body;
   
-  // URL 验证（飞书配置回调时的验证请求）
+  // URL 验证
   if (body.type === 'url_verification') {
     console.log('[Verify] 飞书URL验证请求');
     return res.json({ challenge: body.challenge });
@@ -214,7 +200,6 @@ app.post('/webhook/event', async (req, res) => {
   // 事件回调 v2
   if (body.schema === '2.0') {
     console.log(`[Event] 收到事件: ${body.header?.event_type}`);
-    // 先返回200，再异步处理
     res.json({ code: 0 });
     try {
       await handleEvent(body);
@@ -224,7 +209,6 @@ app.post('/webhook/event', async (req, res) => {
     return;
   }
   
-  // 兜底
   res.json({ code: 0 });
 });
 
@@ -232,6 +216,7 @@ app.post('/webhook/event', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   console.log(`🦐 虾果机器人服务已启动，端口: ${PORT}`);
+  console.log(`🧠 AI引擎: Perplexity Sonar`);
   await getTenantToken();
   await getBotInfo();
 });
